@@ -6,6 +6,8 @@ from typing import Optional, Tuple
 from moviepy.editor import ImageSequenceClip
 import random
 
+from src.scene_generation import INFINITE_DEPTH
+
 def compute_tform_cam2world_2d(viewpoint, center):
     vx, vy = viewpoint
     cx, cy = center
@@ -38,6 +40,8 @@ def take_1d_picture(scene, center, viewpoint, focal_length, picture_size, pictur
     vx, vy = viewpoint
     # Pixels of the picture
     projected_pixels = np.zeros((picture_size, 3), dtype=np.float32)
+    # Depth map
+    depth_map = np.ones((picture_size), dtype=np.float32) * INFINITE_DEPTH
     # Define the image plane points and ray cast
     dx, dy = np.array([cx - vx, cy - vy])
     ux, uy = np.array([dx, dy]) / np.linalg.norm([dx, dy])
@@ -66,10 +70,11 @@ def take_1d_picture(scene, center, viewpoint, focal_length, picture_size, pictur
             # Check if the ray is hitting the object
             if 0 <= intersect_y < scene.shape[0] and 0 <= intersect_x < scene.shape[1] and np.sum(scene[intersect_y, intersect_x]) != 0:
                 projected_pixels[j] = scene[intersect_y, intersect_x]
+                depth_map[j] = n
                 break
     # Compute the 3x3 transformation matrix from camera to world coordinates
     tform_cam2world = compute_tform_cam2world_2d(viewpoint, center)
     if debug:
         plt.plot(image_plane_points_x, image_plane_points_y, 'b-')
         plt.show()
-    return projected_pixels, image_plane_points_x, image_plane_points_y, tform_cam2world
+    return projected_pixels, image_plane_points_x, image_plane_points_y, tform_cam2world, depth_map

@@ -8,6 +8,7 @@ import random
 
 WORLD_SIZE = 400
 CENTER = (WORLD_SIZE // 2, WORLD_SIZE // 2)
+INFINITE_DEPTH = 400
 
 
 # Function to generate synthetic 2D scene
