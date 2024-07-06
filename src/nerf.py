@@ -3,12 +3,13 @@ from typing import Tuple
 import torch
 
 from .common import (
-    cumprod_exclusive,
     compute_query_points_from_rays_2d,
-    positional_encoding,
+    cumprod_exclusive,
     get_minibatches,
+    get_ray_bundle_2d,
+    positional_encoding,
 )
-from .scene_generation import WORLD_SIZE
+from .scene_generation import CENTER, WORLD_SIZE
 
 
 class VeryTinyNerfModel2D(torch.nn.Module):
@@ -86,37 +87,48 @@ def render_volume_density_2d(
 
 
 def nerf_2d(
-    ray_origins,
-    ray_directions,
+    camera_matrix,
+    picture_size,
+    picture_fov,
+    focal_length,
     near_thresh,
     far_thresh,
     depth_samples_per_ray,
     nerf_model,
+    chunksize,
+    nerf_radius,
 ):
     """
-    Helper function that computes the rgb, depth, and acc map for a given set of rays.
+    Helper function that computes the rgb, depth, and acc map for a given pose (camera matrix).
 
     Args:
-        ray_origins (_type_): _description_
-        ray_directions (_type_): _description_
-        near_thresh (_type_): _description_
-        far_thresh (_type_): _description_
-        depth_samples_per_ray (_type_): _description_
-        nerf_model
     """
 
+    ray_origins, ray_directions = get_ray_bundle_2d(
+        picture_size, picture_fov, focal_length, camera_matrix
+    )
     query_points, depth_values = compute_query_points_from_rays_2d(
         ray_origins, ray_directions, near_thresh, far_thresh, depth_samples_per_ray
     )
     flattened_query_points = query_points.view(-1, 2)
     # Normalize coords between 0 and 1
-    flattened_query_points = (flattened_query_points / WORLD_SIZE) * 2 - 1
-    encoded_query_points = positional_encoding(flattened_query_points)
-    batches = get_minibatches(encoded_query_points, chunksize=512)
+    flattened_query_points_normalized = (flattened_query_points / WORLD_SIZE) * 2 - 1
+    encoded_query_points = positional_encoding(flattened_query_points_normalized)
+    batches = get_minibatches(encoded_query_points, chunksize=chunksize)
     predictions = []
     for batch in batches:
         predictions.append(nerf_model(batch))
     radiance_field_flattened = torch.cat(predictions, dim=0)
     unflatten_shape = list(query_points.shape[:-1]) + [4]
-    radiance_field = torch.reshape(radiance_field_flattened, unflatten_shape)
+    radiance_field = radiance_field_flattened.view(unflatten_shape)
+    # TODO: Check if the following makes sense or not, I'm trying to avoid evaluating the model in areas outside the nerf_radius
+    # # If ray origin is outside the nerf radius to the following
+    # if torch.norm(ray_origins[0] - torch.tensor(CENTER), dim=-1) > nerf_radius:
+    #     # Make the radiance field == 0 for all query points outside the nerf_radius
+    #     distance = torch.norm(flattened_query_points - torch.tensor(CENTER), dim=-1)
+    #     distance = distance.view(query_points.shape[:-1])
+    #     radiance_field[distance > nerf_radius] = 0
+    # # # Log number of points where distance > nerf_radius
+    # # num_points_outside_radius = (distance > nerf_radius).sum()
+    # # print(f"Number of points outside radius: {num_points_outside_radius}")
     return render_volume_density_2d(radiance_field, ray_origins, depth_values)

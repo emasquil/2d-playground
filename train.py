@@ -469,36 +469,59 @@ def train(
 
     # After training is completed, save the model
     torch.save(model.state_dict(), f"{output}/model.pth")
-    # # Generate a circular video around the scene
-    # all_query_points, all_depth_values = common.compute_query_points_from_rays_2d(
-    #     ray_origins,
-    #     ray_directions,
-    #     config["training"]["near_thresh"],
-    #     config["training"]["far_thresh"],
-    #     config["training"]["depth_samples_per_ray"],
-    # )
-    # all_flattened_query_points = all_query_points.view(-1, 2)
-    # all_flattened_query_points = (
-    #     all_flattened_query_points / config["scene"]["world_size"]
-    # ) * 2 - 1
-    # all_encoded_query_points = common.positional_encoding(all_flattened_query_points)
-    # all_batches = common.get_minibatches(
-    #     all_encoded_query_points, chunksize=config["training"]["chunksize"]
-    # )
-    # if method == "neus":
-    #     raise NotImplementedError("Method not implemented yet.")
-    # elif method == "nerf":
-    #     all_predictions = []
-    #     for batch in all_batches:
-    #         all_predictions.append(model(batch))
-    #     all_radiance_field_flattened = torch.cat(all_predictions, dim=0)
-    #     all_unflattened_shape = list(all_query_points.shape[:-1]) + [4]
-    #     all_radiance_field = all_radiance_field_flattened.view(all_unflattened_shape)
-    #     all_rgb_predicted, all_depth_predicted, _ = nerf.render_volume_density_2d(
-    #         all_radiance_field,
-    #         ray_origins,
-    #         all_depth_values,
-    #     )
+    typer.echo("Training completed, model saved.")
+
+    # Generate a circular video around the scene
+    typer.echo("Generating circular video...")
+    camera.generate_videos(
+        scene,
+        list(zip(c_xs, c_ys)),
+        model,
+        nerf.nerf_2d,
+        output,
+        "circular",
+        config,
+    )
+
+    # Generate a zoom out video from the scene
+    starting_point = (150, 80)
+    # Compute direction between starting point and center
+    video_direction = np.array(scene_center) - np.array(starting_point)
+    # Normalize the direction
+    direction = video_direction / np.linalg.norm(video_direction)
+    depths = np.linspace(0, 200, 50)
+    # Generate 50 view points from starting point away from the center
+    video_viewpoints = [starting_point - depth * direction for depth in depths]
+    typer.echo("Generating zoom out video...")
+    camera.generate_videos(
+        scene,
+        video_viewpoints,
+        model,
+        nerf.nerf_2d,
+        output,
+        "zoom_out",
+        config,
+    )
+
+    # Generate a zoom in video from the scene
+    starting_point = (c_xs[39], c_ys[39])
+    # Compute direction between center and starting point
+    video_direction = np.array(starting_point) - np.array(scene_center)
+    # Normalize the direction
+    direction = video_direction / np.linalg.norm(video_direction)
+    depths = np.linspace(0, 100, 50)
+    # Generate 50 view points from starting point away from the center
+    video_viewpoints = [starting_point - depth * direction for depth in depths]
+    typer.echo("Generating zoom in video...")
+    camera.generate_videos(
+        scene,
+        video_viewpoints,
+        model,
+        nerf.nerf_2d,
+        output,
+        "zoom_in",
+        config,
+    )
 
 
 if __name__ == "__main__":

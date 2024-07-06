@@ -1,7 +1,11 @@
+import typing as T
+
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
+from moviepy.editor import ImageSequenceClip
 
-from src.scene_generation import INFINITE_DEPTH
+from src.scene_generation import CENTER, INFINITE_DEPTH
 
 
 def compute_tform_cam2world_2d(viewpoint, center):
@@ -88,3 +92,76 @@ def take_1d_picture(
         tform_cam2world,
         depth_map,
     )
+
+
+def generate_videos(
+    scene: np.ndarray,
+    viewpoints: T.List[np.ndarray],
+    rendering_model: torch.nn.Module,
+    rendering_function: T.Callable,
+    output_dir: str,
+    video_name: str,
+    config: T.Dict,
+) -> None:
+    """Generates a ground truth and a rendered video from a scene and a list of viewpoints. Saves the videos to disk.
+
+    Args:
+        scene (np.ndarray): _description_
+        viewpoints (T.List[np.ndarray]): _description_
+        rendering_model (torch.nn.Module): _description_
+        rendering_function (T.Callable): _description_
+    """
+    # For each view point generate a 1D image and also render the image using the trained model and the camera matrix
+    video_gt_images = []
+    video_rendered_images = []
+    for i in range(len(viewpoints)):
+        with torch.no_grad():
+            # Generate the ground truth
+            (
+                gt_image,
+                _,
+                _,
+                camera_matrix,
+                _,
+            ) = take_1d_picture(
+                scene,
+                CENTER,
+                viewpoints[i],
+                config["camera"]["focal_length"],
+                config["camera"]["picture_size"],
+                config["camera"]["picture_fov"],
+            )
+            rgb_predicted, _, _ = rendering_function(
+                torch.from_numpy(camera_matrix),
+                config["camera"]["picture_size"],
+                config["camera"]["picture_fov"],
+                config["camera"]["focal_length"],
+                config["training"]["near_thresh"],
+                config["training"]["far_thresh"],
+                config["training"]["depth_samples_per_ray"],
+                rendering_model,
+                config["training"]["chunksize"],
+                config["camera"]["radius"],
+            )  # (picture_size, 3)
+            video_gt_images.append(gt_image)
+            video_rendered_images.append(
+                rgb_predicted.cpu().numpy().reshape(1, -1, 3)
+            )  # (1, picture_size, 3)
+
+    # Reshape images to give them some height
+    video_gt_images = [np.tile(img, (200, 1, 1)) for img in video_gt_images]
+    video_rendered_images = [np.tile(img, (200, 1, 1)) for img in video_rendered_images]
+
+    # Convert images to uint8
+    video_gt_images = [(img * 255).astype(np.uint8) for img in video_gt_images]
+    video_rendered_images = [
+        (img * 255).astype(np.uint8) for img in video_rendered_images
+    ]
+
+    # Render clips
+    clip_gt = ImageSequenceClip(video_gt_images, fps=1)
+    clip_rendered = ImageSequenceClip(video_rendered_images, fps=1)
+
+    # Save clips to disk
+    clip_gt.write_videofile(f"{output_dir}/{video_name}_gt.mp4")
+    clip_rendered.write_videofile(f"{output_dir}/{video_name}_rendered.mp4")
