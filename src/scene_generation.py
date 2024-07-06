@@ -1,10 +1,5 @@
 import numpy as np
-import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter
-import torch
-from typing import Optional, Tuple
-from moviepy.editor import ImageSequenceClip
-import random
 
 WORLD_SIZE = 400
 CENTER = (WORLD_SIZE // 2, WORLD_SIZE // 2)
@@ -77,3 +72,25 @@ def generate_deterministic_scene():
     scene[200:300, 200:250, :] = [1.0, 1.0, 1.0]
 
     return scene
+
+
+def get_ground_truth_radiance_field(scene: np.ndarray) -> np.ndarray:
+    """Helper function to compute the ground truth density and RGB maps from a scene, to help with debugging.
+
+    Args:
+        scene (np.ndarray): The input scene
+
+    Returns:
+        np.ndarray: The radiance field containing the rgb as the first 3 channels and the density as the last channel ([H, W, 4])
+    """
+
+    # Density should be 0 where the scene is black, and 1 elsewhere
+    # sigma[x, y], where x is the horizontal coordinate and y is the vertical coordinate, thus to compute sigma[x,y] we need to check scene[y, x]
+    density_map = np.zeros_like(scene[..., 0])
+    density_map[scene.sum(axis=-1) > 0] = 1.0
+    density_map = density_map.transpose(1, 0)
+    # RGB values are the scene values, rgb[x, y, c], where x is the horizontal coordinate, y is the vertical coordinate, and c is the color channel
+    # rgb[x, y, c] = scene[y, x, c]
+    rgb_map = scene.transpose(1, 0, 2)
+    radiance_field = np.concatenate([rgb_map, density_map[..., None]], axis=-1)
+    return radiance_field
