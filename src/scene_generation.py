@@ -1,5 +1,7 @@
+import typing as T
+
 import numpy as np
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import distance_transform_edt, gaussian_filter
 
 WORLD_SIZE = 400
 CENTER = (WORLD_SIZE // 2, WORLD_SIZE // 2)
@@ -94,3 +96,40 @@ def get_ground_truth_radiance_field(scene: np.ndarray) -> np.ndarray:
     rgb_map = scene.transpose(1, 0, 2)
     radiance_field = np.concatenate([rgb_map, density_map[..., None]], axis=-1)
     return radiance_field
+
+
+def get_ground_truth_sdf(
+    scene: np.ndarray, epsilon: float = 2
+) -> T.Tuple[np.ndarray, np.ndarray]:
+    """
+    Compute the ground truth signed distance function (SDF) for the scene and the rgb map.
+
+    Args:
+    scene (np.ndarray): The input scene of shape (H, W, 3)
+    epsilon (float): Threshold for considering a value as 0 (boundary)
+
+    Returns:
+    np.ndarray: The SDF map of shape (w, H)
+    np.ndarray: The RGB map of shape (W, H, 3)
+    """
+
+    H, W, _ = scene.shape
+
+    # Create a binary mask of the scene
+    mask = (scene.sum(axis=-1) > 0).astype(np.uint8)
+
+    # Compute the distance transform for inside and outside
+    distance_inside = distance_transform_edt(mask)
+    distance_outside = distance_transform_edt(1 - mask)
+
+    # Combine the inside and outside distances to create the SDF
+    sdf = distance_outside - distance_inside
+
+    # Set values close to 0 to exactly 0
+    sdf[np.abs(sdf) < epsilon] = 0  # H, W
+
+    # RGB values are the scene values, rgb[x, y, c], where x is the horizontal coordinate, y is the vertical coordinate, and c is the color channel
+    # rgb[x, y, c] = scene[y, x, c]
+    rgb_map = scene.transpose(1, 0, 2)  # W, H, 3
+
+    return sdf.T, rgb_map
