@@ -13,6 +13,7 @@ import yaml
 from moviepy.editor import ImageSequenceClip
 from PIL import Image
 from rich.progress import track
+from schedulefree import AdamWScheduleFree
 from torch.utils.tensorboard import SummaryWriter
 
 from src import camera, common, nerf, neus, scene_generation
@@ -175,25 +176,28 @@ def train(
         distance_model.to(device)
         s_model.to(device)
         color_model.to(device)
-        optimizer = torch.optim.Adam(
+        optimizer = AdamWScheduleFree(
             list(distance_model.parameters())
             + list(s_model.parameters())
             + list(color_model.parameters()),
             lr=float(config["training"]["lr"]),
+            warmup_steps=config["training"]["warmup_steps"],
         )
 
     elif method == "nerf":
         model = nerf.VeryTinyNerfModel2D()
         model.to(device)
-        optimizer = torch.optim.Adam(
-            model.parameters(), lr=float(config["training"]["lr"])
+        optimizer = AdamWScheduleFree(
+            model.parameters(),
+            lr=float(
+                config["training"]["lr"],
+                warmup_steps=config["training"]["warmup_steps"],
+            ),
         )
-        # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        #     optimizer, config["training"]["num_iters"]
-        # )
 
     typer.echo("Starting training...")
-    for i in track(range(config["training"]["num_iters"]), description="Training..."):
+    # for i in track(range(config["training"]["num_iters"]), description="Training..."):
+    for i in range(config["training"]["num_iters"]):
         if config["training"]["random_batches"]:
             # Create a batch of rays and targets from multiple images
             batch_indices = np.random.choice(
@@ -236,12 +240,9 @@ def train(
         flattened_query_points = (
             flattened_query_points / config["scene"]["world_size"]
         ) * 2 - 1  # (W * D) x 2
-        encoded_query_points = common.positional_encoding(
-            flattened_query_points
-        )  # W x 64
         batches = common.get_minibatches(
-            encoded_query_points, chunksize=config["training"]["chunksize"]
-        )  # List of W x (2 + 2 * 2 * freqs) -> W x f
+            flattened_query_points, chunksize=config["training"]["chunksize"]
+        )  # List of W x 2
         predictions = []
         predicted_sdfs = []
         predicted_colors = []
@@ -258,19 +259,20 @@ def train(
                         retain_graph=True,
                     )[0]
                 )
-                predicted_colors.append(
-                    color_model(
-                        torch.cat(
-                            [
-                                batch,
-                                torch.nn.functional.normalize(
-                                    gradients_sdfs[-1], dim=-1
-                                ),
-                            ],
-                            dim=-1,
-                        )
-                    )
-                )
+                predicted_colors.append(color_model(batch))
+                # predicted_colors.append(
+                #     color_model(
+                #         torch.cat(
+                #             [
+                #                 batch,
+                #                 torch.nn.functional.normalize(
+                #                     gradients_sdfs[-1], dim=-1
+                #                 ),
+                #             ],
+                #             dim=-1,
+                #         )
+                #     )
+                # )
             elif method == "nerf":
                 predictions.append(model(batch))
 
@@ -294,7 +296,9 @@ def train(
                 sdf, s, color, depth_values
             )
             # Compute rgb and monocular loss first
-            rgb_loss = torch.nn.functional.l1_loss(rgb_predicted, target_rgb)
+            rgb_loss = torch.nn.functional.l1_loss(
+                rgb_predicted, target_rgb, reduction="sum"
+            )
             # Normalize predicted depth
             depth_predicted /= camera.INFINITE_DEPTH
             # If monocular cue is enabled, add depth loss
@@ -338,8 +342,6 @@ def train(
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            # Scheduler step
-            # scheduler.step()
             # Log to tensorboard
             writer.add_scalar("Loss/train", loss.item(), i)
 
@@ -368,11 +370,9 @@ def train(
             test_flattened_query_points_normalized = (
                 test_flattened_query_points / config["scene"]["world_size"]
             ) * 2 - 1
-            test_encoded_query_points = common.positional_encoding(
-                test_flattened_query_points_normalized
-            )
             test_batches = common.get_minibatches(
-                test_encoded_query_points, chunksize=config["training"]["chunksize"]
+                test_flattened_query_points_normalized,
+                chunksize=config["training"]["chunksize"],
             )
 
             if method == "neus":
@@ -391,19 +391,20 @@ def train(
                             retain_graph=True,
                         )[0]
                     )
-                    test_color_predictions.append(
-                        color_model(
-                            torch.cat(
-                                [
-                                    batch,
-                                    torch.nn.functional.normalize(
-                                        test_gradients[-1], dim=-1
-                                    ),
-                                ],
-                                dim=-1,
-                            )
-                        )
-                    )
+                    # test_color_predictions.append(
+                    #     color_model(
+                    #         torch.cat(
+                    #             [
+                    #                 batch,
+                    #                 torch.nn.functional.normalize(
+                    #                     test_gradients[-1], dim=-1
+                    #                 ),
+                    #             ],
+                    #             dim=-1,
+                    #         )
+                    #     )
+                    # )
+                    test_color_predictions.append(color_model(batch))
                 test_sdf_flattened = torch.cat(test_sdf_predictions, dim=0)
                 test_color_flattened = torch.cat(test_color_predictions, dim=0)
                 test_gradients_flattened = torch.cat(test_gradients, dim=0)
@@ -482,8 +483,6 @@ def train(
                 world_points = world_points.view(-1, 2)
                 if method == "neus":
                     world_points.requires_grad_(True)
-                # Encode world points
-                world_points = common.positional_encoding(world_points)
                 # Split world points into batches
                 world_batches = common.get_minibatches(
                     world_points, chunksize=config["training"]["chunksize"]
@@ -503,19 +502,20 @@ def train(
                             retain_graph=True,
                         )[0]
                     )
-                    world_color_predictions.append(
-                        color_model(
-                            torch.cat(
-                                [
-                                    batch,
-                                    torch.nn.functional.normalize(
-                                        world_gradients[-1], dim=-1
-                                    ),
-                                ],
-                                dim=-1,
-                            )
-                        )
-                    )
+                    # world_color_predictions.append(
+                    #     color_model(
+                    #         torch.cat(
+                    #             [
+                    #                 batch,
+                    #                 torch.nn.functional.normalize(
+                    #                     world_gradients[-1], dim=-1
+                    #                 ),
+                    #             ],
+                    #             dim=-1,
+                    #         )
+                    #     )
+                    # )
+                    world_color_predictions.append(color_model(batch))
                 world_sdf_flattened = torch.cat(world_sdf_predictions, dim=0)
                 world_color_flattened = torch.cat(world_color_predictions, dim=0)
                 world_unflattened_distance_shape = [
@@ -602,8 +602,6 @@ def train(
                 world_points = (world_points / config["scene"]["world_size"]) * 2 - 1
                 # Flatten world points
                 world_points = world_points.view(-1, 2)
-                # Encode world points
-                world_points = common.positional_encoding(world_points)
                 # Split world points into batches
                 world_batches = common.get_minibatches(
                     world_points, chunksize=config["training"]["chunksize"]

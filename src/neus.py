@@ -3,13 +3,8 @@ from typing import Tuple
 import numpy as np
 import torch
 
-from .common import (
-    compute_query_points_from_rays_2d,
-    cumprod_exclusive,
-    get_minibatches,
-    get_ray_bundle_2d,
-    positional_encoding,
-)
+from .common import (compute_query_points_from_rays_2d, cumprod_exclusive,
+                     get_minibatches, get_ray_bundle_2d, positional_encoding)
 from .scene_generation import CENTER, WORLD_SIZE
 
 
@@ -29,17 +24,18 @@ class DistanceModel(torch.nn.Module):
         self.softplus = torch.nn.functional.softplus
 
     def forward(self, x):
-        x = self.softplus(self.layer1(x))
-        x = self.softplus(self.layer2(x))
+        x = positional_encoding(x)
+        x = self.softplus(self.layer1(x), beta=100)
+        x = self.softplus(self.layer2(x), beta=100)
         x = self.layer3(x)
-        return self.softplus(x)
+        return x
 
 
 class ColorModel(torch.nn.Module):
     def __init__(self, filter_size=128, num_encoding_functions=6):
         super(ColorModel, self).__init__()
-        # Input layer: input dimension is 2 for 2D coordinates but they are encoded, we duplicate the input because we also have the gradient
-        self.layer1 = torch.nn.Linear(2 * (2 + 2 * 2 * num_encoding_functions), filter_size)
+        # Input layer: input dimension is 2 for 2D coordinates but they are encoded
+        self.layer1 = torch.nn.Linear(2 + 2 * 2 * num_encoding_functions, filter_size)
         # Layer 2
         self.layer2 = torch.nn.Linear(filter_size, filter_size)
         # Layer 3: output 3 values for RGB
@@ -48,6 +44,7 @@ class ColorModel(torch.nn.Module):
         self.softplus = torch.nn.functional.softplus
 
     def forward(self, x):
+        x = positional_encoding(x)
         x = self.softplus(self.layer1(x))
         x = self.softplus(self.layer2(x))
         x = self.layer3(x)
@@ -110,8 +107,7 @@ def render_volume_density_2d(
     b, d = sdf.shape  # b batch size, d 1d picture size
     sigmoid_sdf = Phi_s(s, sdf)  # b, d
     alpha = torch.maximum(
-        (sigmoid_sdf[:-1] - sigmoid_sdf[1:]) / sigmoid_sdf[:-1]
-        + 1e-10,  # why do we need this small constant?
+        (sigmoid_sdf[:-1] - sigmoid_sdf[1:]) / (sigmoid_sdf[:-1] + 1e-10),
         torch.zeros_like(sigmoid_sdf[1:]),
     )  # b-1, d, 1
     # add a last 0 as the last alpha which is the one obtained by the difference between

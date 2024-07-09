@@ -2,8 +2,6 @@
 # Frist define the scene parameters
 # Then define the model parameters
 
-debug: False # If true, density and rgb maps are not learned, but are instead ground truth
-
 camera:
   focal_length: 30 # Focal length in world units
   picture_fov: 50 # "Length" of the focal plane in world units
@@ -16,9 +14,10 @@ training:
   batch_size: 500 # Number of rays to be considered at each backprop iteration when considereing random rays
   lr: 5e-3
   num_iters: 50_000
-  monocular_cue: True # If true, use monocular cues for training
-  random_batches: False # If true, consider random batches of rays for training, if false, consider 1 image at a time
+  monocular_cue: False # If true, use monocular cues for training
+  random_batches: True # If true, consider random batches of rays for training, if false, consider 1 image at a time
   near_thresh: 20 # Near threshold for querying the model
   far_thresh: 600 # Far threshold for querying the model
   depth_samples_per_ray: 64 # Number of points to query along each ray
   display_every: 500 # Number of iterations between displaying the image
+  warmup_steps: 2500 # Number of steps to warmup the model

@@ -12,7 +12,7 @@ camera:
 training:
   chunksize: 8192 # Number of rays to process at once
   batch_size: 500 # Number of rays to be considered at each backprop iteration when considereing random rays
-  lr: 5e-3
+  lr: 5e-4
   num_iters: 50_000
   monocular_cue: False # If true, use monocular cues for training
   random_batches: True # If true, consider random batches of rays for training, if false, consider 1 image at a time
@@ -21,3 +21,4 @@ training:
   depth_samples_per_ray: 64 # Number of points to query along each ray
   display_every: 500 # Number of iterations between displaying the image
   eikonal_weight: 0.1 # Weight of the eikonal loss
+  warmup_steps: 2500 # Number of steps to warmup the model

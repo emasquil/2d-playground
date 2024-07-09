@@ -27,6 +27,7 @@ class VeryTinyNerfModel2D(torch.nn.Module):
         self.relu = torch.nn.functional.relu
 
     def forward(self, x):
+        x = positional_encoding(x)
         x = self.relu(self.layer1(x))
         x = self.relu(self.layer2(x))
         x = self.layer3(x)
@@ -113,8 +114,7 @@ def nerf_2d(
     flattened_query_points = query_points.view(-1, 2)
     # Normalize coords between 0 and 1
     flattened_query_points_normalized = (flattened_query_points / WORLD_SIZE) * 2 - 1
-    encoded_query_points = positional_encoding(flattened_query_points_normalized)
-    batches = get_minibatches(encoded_query_points, chunksize=chunksize)
+    batches = get_minibatches(flattened_query_points_normalized, chunksize=chunksize)
     predictions = []
     for batch in batches:
         predictions.append(nerf_model(batch))
