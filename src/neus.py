@@ -3,8 +3,13 @@ from typing import Tuple
 import numpy as np
 import torch
 
-from .common import (compute_query_points_from_rays_2d, cumprod_exclusive,
-                     get_minibatches, get_ray_bundle_2d, positional_encoding)
+from .common import (
+    compute_query_points_from_rays_2d,
+    cumprod_exclusive,
+    get_minibatches,
+    get_ray_bundle_2d,
+    positional_encoding,
+)
 from .scene_generation import CENTER, WORLD_SIZE
 
 
@@ -13,22 +18,80 @@ def Phi_s(s: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
 
 
 class DistanceModel(torch.nn.Module):
-    def __init__(self, filter_size=128, num_encoding_functions=6):
+    def __init__(
+        self,
+        d_in=2,
+        d_out=1,
+        filter_size=128,
+        num_layers=3,
+        num_encoding_functions=6,
+        geometric_init=True,
+        weight_norm=True,
+        inside_outside=False,
+        bias=0.5,
+        scale=1,
+    ):
         super(DistanceModel, self).__init__()
-        self.layer1 = torch.nn.Linear(2 + 2 * 2 * num_encoding_functions, filter_size)
-        # Layer 2
-        self.layer2 = torch.nn.Linear(filter_size, filter_size)
-        # Layer 3: output 1 value for distance
-        self.layer3 = torch.nn.Linear(filter_size, 1)
-        # Activation function
-        self.softplus = torch.nn.functional.softplus
+
+        self.num_encoding_functions = num_encoding_functions
+        self.scale = scale
+        dims = (
+            [d_in + 2 * d_in * num_encoding_functions]
+            + [filter_size] * (num_layers - 1)
+            + [d_out]
+        )
+
+        self.num_layers = len(dims)
+
+        for l in range(0, self.num_layers - 1):
+            lin = torch.nn.Linear(dims[l], dims[l + 1])
+
+            if geometric_init:
+                if l == self.num_layers - 2:
+                    if not inside_outside:
+                        torch.nn.init.normal_(
+                            lin.weight,
+                            mean=np.sqrt(np.pi) / np.sqrt(dims[l]),
+                            std=0.0001,
+                        )
+                        torch.nn.init.constant_(lin.bias, -bias)
+                    else:
+                        torch.nn.init.normal_(
+                            lin.weight,
+                            mean=-np.sqrt(np.pi) / np.sqrt(dims[l]),
+                            std=0.0001,
+                        )
+                        torch.nn.init.constant_(lin.bias, bias)
+                elif l == 0:
+                    torch.nn.init.constant_(lin.bias, 0.0)
+                    torch.nn.init.constant_(lin.weight[:, 3:], 0.0)
+                    torch.nn.init.normal_(
+                        lin.weight[:, :3], 0.0, np.sqrt(2) / np.sqrt(dims[l + 1])
+                    )
+                else:
+                    torch.nn.init.constant_(lin.bias, 0.0)
+                    torch.nn.init.normal_(
+                        lin.weight, 0.0, np.sqrt(2) / np.sqrt(dims[l + 1])
+                    )
+
+            if weight_norm:
+                lin = torch.nn.utils.weight_norm(lin)
+
+            setattr(self, f"lin{l}", lin)
+
+        self.activation = torch.nn.Softplus(beta=100)
 
     def forward(self, x):
+        x = x * self.scale
         x = positional_encoding(x)
-        x = self.softplus(self.layer1(x), beta=100)
-        x = self.softplus(self.layer2(x), beta=100)
-        x = self.layer3(x)
-        return x
+
+        for l in range(0, self.num_layers - 1):
+            lin = getattr(self, f"lin{l}")
+            x = lin(x)
+            if l < self.num_layers - 2:
+                x = self.activation(x)
+
+        return torch.cat([x[:, :1] / self.scale, x[:, 1:]], dim=-1)
 
 
 class ColorModel(torch.nn.Module):
