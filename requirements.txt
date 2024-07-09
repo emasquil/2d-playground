@@ -1,0 +1,10 @@
+matplotlib
+numpy
+torch
+typer
+pyyaml
+moviepy
+Pillow
+rich
+schedulefree
+scipy
