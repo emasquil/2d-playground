@@ -10,7 +10,6 @@ import numpy as np
 import torch
 import typer
 import yaml
-from moviepy.editor import ImageSequenceClip
 from PIL import Image
 from rich.progress import track
 from schedulefree import AdamWScheduleFree
@@ -26,13 +25,14 @@ def train(
     method: str = typer.Argument(..., help="Method to train."),
     config: str = typer.Argument(..., help="Path to configuration file."),
     output: str = typer.Argument(..., help="Path to output directory."),
+    gpu_number: int = typer.Option(0, help="GPU number to use."),
 ):
     """
     Main training script for all methods.
     """
 
     # Seed everything
-    seed = 0
+    seed = 420
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
@@ -56,17 +56,20 @@ def train(
         "inf_depth": scene_generation.INFINITE_DEPTH,
     }
 
+    # Save config in tensorboard
+    writer.add_text("Config", yaml.dump(config), 0)
+
     # Scene generation
     typer.echo("Generating scene...")
-    scene = np.clip(
-        scene_generation.generate_deterministic_scene()
-        + scene_generation.generate_random_scene()
-        - 0.7,
-        0,
-        1,
-    )
+    # scene = np.clip(
+    #     scene_generation.generate_deterministic_scene()
+    #     + scene_generation.generate_random_scene()
+    #     - 0.7,
+    #     0,
+    #     1,
+    # )
     scene = scene_generation.generate_deterministic_scene()
-
+    # scene = scene_generation.generate_random_scene()
     # Picture acquisition
     scene_center = config["scene"]["center"]
     theta = np.linspace(
@@ -135,7 +138,11 @@ def train(
     camera_matrices = np.delete(camera_matrices, test_index, axis=0)
     depth_maps = np.delete(depth_maps, test_index, axis=0)
     # Send everything to device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        device = torch.device(gpu_number)
+    else:
+        device = torch.device("cpu")
+    typer.echo(f"Training on {device}.")
     test_image = torch.from_numpy(test_image).to(device)
     test_camera_matrix = torch.from_numpy(test_camera_matrix).to(device)
     test_depth_map = torch.from_numpy(test_depth_map).to(device)
@@ -155,8 +162,8 @@ def train(
         for camera_matrix in camera_matrices
     ]
     ray_origins, ray_directions = zip(*rays)
-    ray_origins = torch.stack(ray_origins, axis=0).view(-1, 2)
-    ray_directions = torch.stack(ray_directions, axis=0).view(-1, 2)
+    ray_origins = torch.stack(ray_origins, axis=0).view(-1, 2).to(device)
+    ray_directions = torch.stack(ray_directions, axis=0).view(-1, 2).to(device)
     # Precompute all targets for each ray
     targets = []
     targets_depth_map = []
@@ -196,8 +203,7 @@ def train(
         )
 
     typer.echo("Starting training...")
-    # for i in track(range(config["training"]["num_iters"]), description="Training..."):
-    for i in range(config["training"]["num_iters"]):
+    for i in track(range(config["training"]["num_iters"]), description="Training..."):
         if config["training"]["random_batches"]:
             # Create a batch of rays and targets from multiple images
             batch_indices = np.random.choice(
@@ -260,19 +266,6 @@ def train(
                     )[0]
                 )
                 predicted_colors.append(color_model(batch))
-                # predicted_colors.append(
-                #     color_model(
-                #         torch.cat(
-                #             [
-                #                 batch,
-                #                 torch.nn.functional.normalize(
-                #                     gradients_sdfs[-1], dim=-1
-                #                 ),
-                #             ],
-                #             dim=-1,
-                #         )
-                #     )
-                # )
             elif method == "nerf":
                 predictions.append(model(batch))
 
@@ -356,8 +349,8 @@ def train(
             )
             test_query_points, test_depth_values = (
                 common.compute_query_points_from_rays_2d(
-                    test_ray_o,
-                    test_ray_d,
+                    test_ray_o.to(device),
+                    test_ray_d.to(device),
                     config["training"]["near_thresh"],
                     config["training"]["far_thresh"],
                     config["training"]["depth_samples_per_ray"],
@@ -376,6 +369,10 @@ def train(
             )
 
             if method == "neus":
+                # Save models
+                torch.save(distance_model.state_dict(), f"{output}/distance_model.pth")
+                torch.save(s_model.state_dict(), f"{output}/s_model.pth")
+                torch.save(color_model.state_dict(), f"{output}/color_model.pth")
                 # Get the sdf and rgb map from the model
                 test_sdf_predictions = []
                 test_color_predictions = []
@@ -391,19 +388,6 @@ def train(
                             retain_graph=True,
                         )[0]
                     )
-                    # test_color_predictions.append(
-                    #     color_model(
-                    #         torch.cat(
-                    #             [
-                    #                 batch,
-                    #                 torch.nn.functional.normalize(
-                    #                     test_gradients[-1], dim=-1
-                    #                 ),
-                    #             ],
-                    #             dim=-1,
-                    #         )
-                    #     )
-                    # )
                     test_color_predictions.append(color_model(batch))
                 test_sdf_flattened = torch.cat(test_sdf_predictions, dim=0)
                 test_color_flattened = torch.cat(test_color_predictions, dim=0)
@@ -502,19 +486,6 @@ def train(
                             retain_graph=True,
                         )[0]
                     )
-                    # world_color_predictions.append(
-                    #     color_model(
-                    #         torch.cat(
-                    #             [
-                    #                 batch,
-                    #                 torch.nn.functional.normalize(
-                    #                     world_gradients[-1], dim=-1
-                    #                 ),
-                    #             ],
-                    #             dim=-1,
-                    #         )
-                    #     )
-                    # )
                     world_color_predictions.append(color_model(batch))
                 world_sdf_flattened = torch.cat(world_sdf_predictions, dim=0)
                 world_color_flattened = torch.cat(world_color_predictions, dim=0)
@@ -528,6 +499,8 @@ def train(
                     scene_generation.WORLD_SIZE,
                 ] + [3]
                 world_color = world_color_flattened.view(world_unflattened_color_shape)
+                world_color = world_color.permute(1, 0, 2)
+                world_sdf = world_sdf.permute(1, 0)
 
                 world_sdf = np.expand_dims(
                     world_sdf.detach().cpu().numpy(),
@@ -539,13 +512,26 @@ def train(
                     0,
                 )
 
-                # Log density and rgb in tensorboard
+                # Log sdf and rgb in tensorboard
                 # We need to flip the images because tensorboard expects the origin to be at the top left corner
                 # and we are using the bottom left corner
+                # Normalize sdf and track max and min values
+                max_sdf = np.max(world_sdf)
+                min_sdf = np.min(world_sdf)
+                world_sdf = np.divide(
+                    world_sdf - min_sdf,
+                    max_sdf - min_sdf,
+                    out=np.zeros_like(world_sdf),
+                    where=(max_sdf != min_sdf),
+                )
                 writer.add_image("SDF map", np.flip(world_sdf, axis=1), i)
                 writer.add_image("RGB map", np.flip(world_color, axis=1), i)
+                writer.add_scalar("Max SDF", max_sdf, i)
+                writer.add_scalar("Min SDF", min_sdf, i)
 
             elif method == "nerf":
+                # Save model
+                torch.save(model.state_dict(), f"{output}/model.pth")
                 # Get the radiance field from the model
                 test_predictions = []
                 for batch in test_batches:
@@ -675,11 +661,10 @@ def train(
                 writer.add_image("Test Depth Map", test_depth_map_log, i)
                 writer.add_image("Rendered Depth Map", test_depth_map_predicted, i)
 
-    # After training is completed, save the model
-    torch.save(model.state_dict(), f"{output}/model.pth")
-    typer.echo("Training completed, model saved.")
-
     if method == "nerf":
+        # After training is completed, save the model
+        torch.save(model.state_dict(), f"{output}/model.pth")
+        typer.echo("Training completed, model saved.")
         # Generate a circular video around the scene
         typer.echo("Generating circular video...")
         camera.generate_videos(
@@ -731,6 +716,14 @@ def train(
             "zoom_in",
             config,
         )
+
+    elif method == "neus":
+        # After training is completed, save the model
+        torch.save(distance_model.state_dict(), f"{output}/distance_model.pth")
+        torch.save(s_model.state_dict(), f"{output}/s_model.pth")
+        torch.save(color_model.state_dict(), f"{output}/color_model.pth")
+
+        typer.echo("Training completed, model saved.")
 
 
 if __name__ == "__main__":

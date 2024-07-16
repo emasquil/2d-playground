@@ -22,8 +22,8 @@ def get_ray_bundle_2d(
     rotation_matrix = tform_cam2world[:2, :2]
     translation_vector = tform_cam2world[:2, 2]
 
-    ray_directions = torch.matmul(directions, rotation_matrix.T)
-    ray_origins = torch.tile(translation_vector, (picture_size, 1))
+    ray_directions = torch.matmul(directions.cpu(), rotation_matrix.T.cpu())
+    ray_origins = torch.tile(translation_vector.cpu(), (picture_size, 1))
 
     return ray_origins, ray_directions
 
