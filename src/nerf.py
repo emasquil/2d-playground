@@ -66,6 +66,7 @@ def render_volume_density_2d(
         rgb = torch.sigmoid(radiance_field[..., :3])
     # Large constant for the distance at the last sample point
     one_e_10 = torch.tensor([1e10], dtype=ray_origins.dtype, device=ray_origins.device)
+    depth_values = depth_values.to(ray_origins.device)
     # Compute distances between adjacent depth values
     dists = torch.cat(
         (
@@ -73,7 +74,7 @@ def render_volume_density_2d(
             one_e_10.expand(depth_values[..., :1].shape),
         ),
         dim=-1,
-    )
+    ).to(ray_origins.device)
     # Compute alpha values
     alpha = 1.0 - torch.exp(-sigma_a * dists)
     # Compute weights
@@ -95,7 +96,7 @@ def nerf_2d(
     near_thresh,
     far_thresh,
     depth_samples_per_ray,
-    nerf_model,
+    nerf_models,
     chunksize,
     nerf_radius,
 ):
@@ -104,10 +105,14 @@ def nerf_2d(
 
     Args:
     """
+    # hack to make things compatible with neus
+    nerf_model = nerf_models[0]
+    device = next(nerf_model.parameters()).device
 
     ray_origins, ray_directions = get_ray_bundle_2d(
         picture_size, picture_fov, focal_length, camera_matrix
     )
+    ray_origins, ray_directions = ray_origins.to(device), ray_directions.to(device)
     query_points, depth_values = compute_query_points_from_rays_2d(
         ray_origins, ray_directions, near_thresh, far_thresh, depth_samples_per_ray
     )

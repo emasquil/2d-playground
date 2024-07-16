@@ -8,9 +8,15 @@ CENTER = (WORLD_SIZE // 2, WORLD_SIZE // 2)
 INFINITE_DEPTH = 400
 
 
+def generate_all_green_scene():
+    scene = np.zeros((400, 400, 3), dtype=np.float32)
+
+    scene[100:300, 150:250, :] = np.array([0.0, 1.0, 0.0])
+    return scene
+
+
 # Function to generate synthetic 2D scene
 def generate_random_scene():
-    center = 200, 200
     # Create a blank canvas
     scene = np.zeros((400, 400, 3), dtype=np.float32)
 
@@ -32,7 +38,6 @@ def generate_random_scene():
 
 
 def generate_gradient_scene():
-    center = 200, 200
     # Create a blank canvas
     scene = np.zeros((400, 400, 3), dtype=np.float32)
 
@@ -63,7 +68,6 @@ def generate_gradient_scene():
 
 
 def generate_deterministic_scene():
-    center = 200, 200
     # Create a blank canvas
     scene = np.zeros((400, 400, 3), dtype=np.float32)
 

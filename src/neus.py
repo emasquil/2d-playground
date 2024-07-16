@@ -4,9 +4,13 @@ import numpy as np
 import torch
 
 from .common import (
+    compute_query_points_from_rays_2d,
     cumprod_exclusive,
+    get_minibatches,
+    get_ray_bundle_2d,
     positional_encoding,
 )
+from .scene_generation import CENTER, WORLD_SIZE
 
 
 def Phi_s(s: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
@@ -166,4 +170,52 @@ def render_volume_density_2d(
     rgb_map = (weights[..., None] * color_field).sum(dim=1)  # b, 3
     depth_map = (weights * depth_values).sum(dim=-1)  # b
     acc_map = weights.sum(dim=-1)  # b
+    return rgb_map, depth_map, acc_map
+
+
+def neus_2d(
+    camera_matrix,
+    picture_size,
+    picture_fov,
+    focal_length,
+    near_thresh,
+    far_thresh,
+    depth_samples_per_ray,
+    neus_models,
+    chunksize,
+    neus_radius,
+):
+    """
+    Helper function that computes the rgb, depth, and acc map for a given pose (camera matrix).
+    """
+
+    distance_model, s_model, color_model = neus_models
+    device = next(distance_model.parameters()).device
+
+    ray_origins, ray_directions = get_ray_bundle_2d(
+        picture_size, picture_fov, focal_length, camera_matrix
+    )
+    ray_origins, ray_directions = ray_origins.to(device), ray_directions.to(device)
+    query_points, depth_values = compute_query_points_from_rays_2d(
+        ray_origins, ray_directions, near_thresh, far_thresh, depth_samples_per_ray
+    )
+    flattened_query_points = query_points.view(-1, 2)
+    # Normalize coords between 0 and 1
+    flattened_query_points_normalized = (flattened_query_points / WORLD_SIZE) * 2 - 1
+    batches = get_minibatches(flattened_query_points_normalized, chunksize=chunksize)
+    sdf_predictions = []
+    color_predictions = []
+    for batch in batches:
+        sdf = distance_model(batch)
+        color = color_model(batch)
+        sdf_predictions.append(sdf)
+        color_predictions.append(color)
+    sdf = torch.cat(sdf_predictions, dim=0)
+    color = torch.cat(color_predictions, dim=0)
+    unflattened_distance_shape = list(query_points.shape[:-1])
+    sdf = sdf.view(unflattened_distance_shape)
+    unflattened_color_shape = list(query_points.shape[:-1]) + [3]
+    color = color.view(unflattened_color_shape)
+    s = s_model()
+    rgb_map, depth_map, acc_map = render_volume_density_2d(sdf, s, color, depth_values)
     return rgb_map, depth_map, acc_map

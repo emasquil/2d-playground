@@ -546,7 +546,7 @@ def train(
                 test_rgb_predicted, test_depth_predicted, _ = (
                     nerf.render_volume_density_2d(
                         test_radiance_field,
-                        test_ray_o,
+                        test_ray_o.to(device),
                         test_depth_values,
                     )
                 )
@@ -670,7 +670,7 @@ def train(
         camera.generate_videos(
             scene,
             list(zip(c_xs, c_ys)),
-            model,
+            [model],
             nerf.nerf_2d,
             output,
             "circular",
@@ -690,7 +690,7 @@ def train(
         camera.generate_videos(
             scene,
             video_viewpoints,
-            model,
+            [model],
             nerf.nerf_2d,
             output,
             "zoom_out",
@@ -710,7 +710,7 @@ def train(
         camera.generate_videos(
             scene,
             video_viewpoints,
-            model,
+            [model],
             nerf.nerf_2d,
             output,
             "zoom_in",
@@ -722,8 +722,58 @@ def train(
         torch.save(distance_model.state_dict(), f"{output}/distance_model.pth")
         torch.save(s_model.state_dict(), f"{output}/s_model.pth")
         torch.save(color_model.state_dict(), f"{output}/color_model.pth")
-
         typer.echo("Training completed, model saved.")
+        # Generate a circular video around the scene
+        typer.echo("Generating circular video...")
+        camera.generate_videos(
+            scene,
+            list(zip(c_xs, c_ys)),
+            [distance_model, s_model, color_model],
+            neus.neus_2d,
+            output,
+            "circular",
+            config,
+        )
+
+        # Generate a zoom out video from the scene
+        starting_point = (150, 80)
+        # Compute direction between starting point and center
+        video_direction = np.array(scene_center) - np.array(starting_point)
+        # Normalize the direction
+        direction = video_direction / np.linalg.norm(video_direction)
+        depths = np.linspace(0, 200, 50)
+        # Generate 50 view points from starting point away from the center
+        video_viewpoints = [starting_point - depth * direction for depth in depths]
+        typer.echo("Generating zoom out video...")
+        camera.generate_videos(
+            scene,
+            video_viewpoints,
+            [distance_model, s_model, color_model],
+            neus.neus_2d,
+            output,
+            "zoom_out",
+            config,
+        )
+
+        # Generate a zoom in video from the scene
+        starting_point = (c_xs[39], c_ys[39])
+        # Compute direction between center and starting point
+        video_direction = np.array(starting_point) - np.array(scene_center)
+        # Normalize the direction
+        direction = video_direction / np.linalg.norm(video_direction)
+        depths = np.linspace(0, 100, 50)
+        # Generate 50 view points from starting point away from the center
+        video_viewpoints = [starting_point - depth * direction for depth in depths]
+        typer.echo("Generating zoom in video...")
+        camera.generate_videos(
+            scene,
+            video_viewpoints,
+            [distance_model, s_model, color_model],
+            neus.neus_2d,
+            output,
+            "zoom_in",
+            config,
+        )
 
 
 if __name__ == "__main__":

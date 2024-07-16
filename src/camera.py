@@ -97,7 +97,7 @@ def take_1d_picture(
 def generate_videos(
     scene: np.ndarray,
     viewpoints: T.List[np.ndarray],
-    rendering_model: torch.nn.Module,
+    rendering_models: T.List[torch.nn.Module],
     rendering_function: T.Callable,
     output_dir: str,
     video_name: str,
@@ -139,7 +139,7 @@ def generate_videos(
                 config["training"]["near_thresh"],
                 config["training"]["far_thresh"],
                 config["training"]["depth_samples_per_ray"],
-                rendering_model,
+                rendering_models,
                 config["training"]["chunksize"],
                 config["camera"]["radius"],
             )  # (picture_size, 3)
