@@ -1,7 +1,10 @@
+import io
 from typing import Tuple
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from matplotlib.colors import TwoSlopeNorm
 
 from .common import (
     compute_query_points_from_rays_2d,
@@ -219,3 +222,44 @@ def neus_2d(
     s = s_model()
     rgb_map, depth_map, acc_map = render_volume_density_2d(sdf, s, color, depth_values)
     return rgb_map, depth_map, acc_map
+
+
+def plot_sdf(world_sdf, writer, step):
+    world_sdf = world_sdf.squeeze()
+    # Create a figure and axis
+    fig, ax = plt.subplots(figsize=(10, 8))
+
+    # Calculate the maximum absolute value for symmetric color scaling
+    vmax = max(abs(np.min(world_sdf)), abs(np.max(world_sdf)))
+
+    # Create a diverging norm with white at zero
+    norm = TwoSlopeNorm(vmin=-vmax, vcenter=0, vmax=vmax)
+
+    # Plot the SDF using imshow with a divergent colormap
+    im = ax.imshow(world_sdf, cmap="RdBu_r", norm=norm, origin="lower")
+
+    # Add colorbar
+    cbar = fig.colorbar(im, ax=ax)
+    cbar.set_label("SDF Value")
+
+    # Plot the zero level set
+    ax.contour(world_sdf, levels=[0], colors="k", linewidths=2)
+
+    # Set labels and title
+    ax.set_title("SDF Visualization")
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+
+    # Save the plot to a buffer
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png")
+    buf.seek(0)
+
+    # Convert the buffer to a numpy array
+    image = np.array(plt.imread(buf))
+
+    # Close the figure to free up memory
+    plt.close(fig)
+
+    # Add the image to TensorBoard
+    writer.add_image("SDF map", image.transpose(2, 0, 1), step)

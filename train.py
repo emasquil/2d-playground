@@ -32,7 +32,7 @@ def train(
     """
 
     # Seed everything
-    seed = 420
+    seed = 99
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
@@ -196,10 +196,8 @@ def train(
         model.to(device)
         optimizer = AdamWScheduleFree(
             model.parameters(),
-            lr=float(
-                config["training"]["lr"],
-                warmup_steps=config["training"]["warmup_steps"],
-            ),
+            lr=float(config["training"]["lr"]),
+            warmup_steps=config["training"]["warmup_steps"],
         )
 
     typer.echo("Starting training...")
@@ -513,21 +511,8 @@ def train(
                 )
 
                 # Log sdf and rgb in tensorboard
-                # We need to flip the images because tensorboard expects the origin to be at the top left corner
-                # and we are using the bottom left corner
-                # Normalize sdf and track max and min values
-                max_sdf = np.max(world_sdf)
-                min_sdf = np.min(world_sdf)
-                world_sdf = np.divide(
-                    world_sdf - min_sdf,
-                    max_sdf - min_sdf,
-                    out=np.zeros_like(world_sdf),
-                    where=(max_sdf != min_sdf),
-                )
-                writer.add_image("SDF map", np.flip(world_sdf, axis=1), i)
+                neus.plot_sdf(world_sdf, writer, i)
                 writer.add_image("RGB map", np.flip(world_color, axis=1), i)
-                writer.add_scalar("Max SDF", max_sdf, i)
-                writer.add_scalar("Min SDF", min_sdf, i)
 
             elif method == "nerf":
                 # Save model
